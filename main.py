@@ -21,8 +21,10 @@ def process_image(path):
     edged = cv2.Canny(img_floodfill, 30, 200)
 
     contours, _ = cv2.findContours(edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+
+    floor_contour = max(contours, key=cv2.contourArea)
     
-    cv2.drawContours(img, contours, -1, (0, 255, 0), 3)
+    cv2.drawContours(img, [floor_contour], -1, (0, 255, 0), 3)
 
     cv2.imshow("Thresholded Image", img_threshold)
     cv2.imshow("Floodfilled Image", img_floodfill)

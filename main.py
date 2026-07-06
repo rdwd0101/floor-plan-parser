@@ -1,13 +1,15 @@
 import os
 import cv2
 import numpy as np
-from skimage.filters import frangi
+from skimage.feature import graycomatrix, graycoprops, blob_doh
+import skimage.filters as filters #import frangi, roberts, sobel
+from skimage import morphology
+from skimage.segmentation import flood
 
 INPUT_FOLDER = os.path.join(os.path.curdir, "testcases")
 
 
-def find_non_black_pixel(img_inv):
-    h, w = img_inv.shape
+def find_non_black_pixel(img_inv, h, w):
     for y_idx in range(0, h):
         for x_idx in range(0, w):
             if img_inv[y_idx, x_idx] > 0:
@@ -18,8 +20,56 @@ def find_non_black_pixel(img_inv):
 
 def detect_vessels_frangi(roi):
     gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    h, w = gray_roi.shape
     
     img_inv = cv2.bitwise_not(gray_roi)
+
+    # get wall shade to identify layout
+    contours, _ = cv2.findContours(img_inv, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    mask = np.zeros(gray_roi.shape[:2], dtype=np.uint8)
+    cv2.drawContours(mask, contours, -1, 255, 1)
+    pixels_gray = img_inv[mask == 255]
+
+    if len(pixels_gray) == 0:
+        raise RuntimeError("The contour region contains no pixels")
+    
+    shade_counts = np.bincount(pixels_gray, minlength=256)
+    top_shades_indices = np.argsort(shade_counts)[::-1]
+    
+    shade = top_shades_indices[0]
+    print("Target shade: {}".format(shade))
+
+    shade_tolerance = 5
+    img_inv[img_inv >= shade + shade_tolerance] = 0
+    img_inv[img_inv < shade - shade_tolerance] = 0
+    
+    _, threshold_result = cv2.threshold(
+        img_inv, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+    )
+
+    # rotate
+    #largest_contour = max(contours, key=cv2.contourArea)
+    # in-room detection
+    blurred = cv2.GaussianBlur(threshold_result, (9, 9), 0)
+    #vessels_detected = filters.frangi(blurred, sigmas=range(3, 17), black_ridges=True)
+    #vessels_detected = (vessels_detected * 255).astype(np.uint8)
+
+    cv2.drawContours(threshold_result, contours, -1, 255, 9)
+    _, threshold_result = cv2.threshold(
+        blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+    )
+
+    #lsd = cv2.createLineSegmentDetector(cv2.LSD_REFINE_ADV)
+    #lines = lsd.detect(vessels_detected)[0]
+    #drawn_img = lsd.drawSegments(black_image, lines)
+
+    kernel = np.ones((5, 5), np.uint8)
+    dilated_img = cv2.dilate(threshold_result, kernel, iterations=2)
+
+    cv2.imshow('result', dilated_img)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+    return
     
     y, x = find_non_black_pixel(img_inv)
 
@@ -38,9 +88,10 @@ def detect_vessels_frangi(roi):
 
 
 def process_image(path):
-    img = cv2.imread(path)
+    if not os.path.exists(path):
+        raise RuntimeError("Image not found: {}".format(path))
 
-    # blur and floodfill
+    img = cv2.imread(path)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (9, 9), 0)
     _, img_threshold = cv2.threshold(blurred, 240, 255, cv2.THRESH_BINARY_INV);

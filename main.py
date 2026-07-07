@@ -98,54 +98,81 @@ def get_floor_roi(img, gaussian_kernel=9):
 
 
 #
-# generates segmented image with walls and floor masks and saves it
+# generates layout images and room data using walls and floor masks and saves it
 #
 # input:
 # - img - 3-channel image
 # - floor_mask - mask that represents floor approximation
 # - walls_mask - mask that represents wall approximation
-#
-def save_segmented_layout(img, floor_mask, walls_mask, output_directory):
-    segmented = np.zeros(img.shape[:3], np.uint8)
-    segmented[floor_mask == 255] = (0, 255, 0)
-    segmented[walls_mask == 255] = (0, 255, 255)
-    
-    segmented_path = os.path.join(output_directory, "segmented_layout.png")
-    cv2.imwrite(segmented_path, segmented)
-
-#
-# generates simplified 2d layout image with walls and floor masks and saves it
-#
-# input:
-# - img - 3-channel image
-# - floor_mask - mask that represents floor approximation
-# - walls_mask - mask that represents wall approximation
+# - output_directory - path to store artifacts
 # - minimal_contour_area - value to filter small contours (default is 500, depends on size of the image)
 # - morph_kernel_size - the size of morphology step (closing), default is 15, greater values provides more filled layout pictures
 # - wall_thickness - width of approximated room borders (default is 7)
 #
-def save_simplified_2d_layout(
+def save_layout(
         img, floor_mask, walls_mask, output_directory, minimal_contour_area=500, morph_kernel_size=15, wall_thickness=7):
+    
+    wall_color = (0, 255, 255) # yellow for wall color
+    room_color = (0, 255, 0) # green for room color
+    
     rooms = cv2.subtract(floor_mask, walls_mask)
     contours, _ = cv2.findContours(rooms, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
-    output_image = np.zeros(img.shape[:3], np.uint8)
+    output_image_segmented = np.zeros(img.shape[:3], np.uint8)
+    output_image_segmented[walls_mask == 255] = wall_color # draw walls mask first to fill gaps between room contours
+    
+    output_image_simplified_2d = np.zeros(img.shape[:3], np.uint8)
+
     sorted_contours = sorted(contours, key=cv2.contourArea, reverse=True)
+
+    simplified_layout_data = {
+        "rooms": [],
+        "room_count": 0
+    }
+
+    rooms_data = []
+    
+    image_index = 0
 
     for cnt in sorted_contours:
         if cv2.contourArea(cnt) < minimal_contour_area:
             continue
         
+        cv2.drawContours(output_image_segmented, [cnt], -1, room_color, -1)
+        cv2.drawContours(output_image_segmented, [cnt], -1, wall_color, wall_thickness)
+        
         x, y, w, h = cv2.boundingRect(cnt)
-        cv2.rectangle(output_image, (x, y), (x + w, y + h), (0, 255, 0), -1)
-        cv2.rectangle(output_image, (x, y), (x + w, y + h), (0, 255, 255), wall_thickness)
+        cv2.rectangle(output_image_simplified_2d, (x, y), (x + w, y + h), room_color, -1)
+        cv2.rectangle(output_image_simplified_2d, (x, y), (x + w, y + h), wall_color, wall_thickness)
+
+        rooms_data.append({
+            "room_name": "room_{}".format(image_index),
+            "coordinates": {
+                "x": x,
+                "y": y,
+                "w": w,
+                "h": h
+            }
+        })
+        
+        image_index += 1
+    
+    simplified_layout_data["rooms"] = rooms_data
+    simplified_layout_data["room_count"] = len(rooms_data)
+    
+    simplified_layout_path = os.path.join(output_directory, "simplified_layout_data.json")
+    with open(simplified_layout_path, "w") as file:
+        json.dump(simplified_layout_data, file)
+        print("Saved simplified layout data to: {}".format(simplified_layout_path))
 
     kernel_close = np.ones((morph_kernel_size, morph_kernel_size), np.uint8)
-    output_image = cv2.morphologyEx(output_image, cv2.MORPH_CLOSE, kernel_close)
+    output_image_simplified_2d = cv2.morphologyEx(output_image_simplified_2d, cv2.MORPH_CLOSE, kernel_close)
     
-
     simplified_2d_path = os.path.join(output_directory, "simplified_2d_layout.png")    
-    cv2.imwrite(simplified_2d_path, output_image)
+    cv2.imwrite(simplified_2d_path, output_image_simplified_2d)
+
+    segmented_image_path = os.path.join(output_directory, "segmented_layout.png")
+    cv2.imwrite(segmented_image_path, output_image_segmented)
 
 #
 # input:
@@ -168,10 +195,9 @@ def process_image(path, output_subdirectory):
     floor_mask = np.zeros(cropped.shape[:2], np.uint8)
     cv2.drawContours(floor_mask, [shifted_contour], -1, 255, -1)
     
-    save_segmented_layout(cropped, floor_mask, walls_mask, output_subdirectory)
-    save_simplified_2d_layout(cropped, floor_mask, walls_mask, output_subdirectory)
+    save_layout(cropped, floor_mask, walls_mask, output_subdirectory)
     
-    # save region of interest
+    # save region of interest for reference
     roi_path = os.path.join(output_subdirectory, "roi.png")
     cv2.imwrite(roi_path, cropped)
 

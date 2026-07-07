@@ -1,16 +1,20 @@
 import os
 import cv2
 import numpy as np
-from skimage.feature import graycomatrix, graycoprops, blob_doh
-import skimage.filters as filters #import frangi, roberts, sobel
-from skimage import morphology
-from skimage.segmentation import flood
+import json
+from datetime import datetime
 
+INPUT_DIR = os.path.join(os.path.curdir, "testcases")
+OUTPUT_DIR = os.path.join(os.path.curdir, "output")
 
-INPUT_FOLDER = os.path.join(os.path.curdir, "testcases")
-
-
-def detect_walls(roi):
+#
+# input:
+#  - roi - image (3 channels)
+#  - shade_tolerance - value to adjust wall shade tolerance
+# output:
+# - the mask to approximate walls on the floor
+#
+def detect_walls(roi, shade_tolerance=5):
     gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
     
     img_inv = cv2.bitwise_not(gray_roi)
@@ -31,7 +35,6 @@ def detect_walls(roi):
     shade = top_shades_indices[0]
     print("Target shade: {}".format(shade))
 
-    shade_tolerance = 5
     img_inv[img_inv >= shade + shade_tolerance] = 0
     img_inv[img_inv < shade - shade_tolerance] = 0
     
@@ -93,29 +96,39 @@ def get_floor_roi(img, gaussian_kernel=9):
 
 
 #
-# input: path - path to image to be processed
+# generates segmented image with walls and floor masks and saves it
 #
-def process_image(path):
-    if not os.path.exists(path):
-        raise RuntimeError("Image not found: {}".format(path))
-
-    img = cv2.imread(path)
+# input:
+# - img - 3-channel image
+# - floor_mask - mask that represents floor approximation
+# - walls_mask - mask that represents wall approximation
+#
+def save_segmented_image(img, floor_mask, walls_mask, output_directory):
+    segmented = np.zeros(img.shape[:3], np.uint8)
+    segmented[floor_mask == 255] = (0, 255, 0)
+    segmented[walls_mask == 255] = (0, 255, 255)
     
-    cropped, shifted_contour = get_floor_roi(img)
-    
-    floor_mask = np.zeros(cropped.shape[:2], np.uint8)
-    cv2.drawContours(floor_mask, [shifted_contour], -1, 255, -1)
+    segmented_path = os.path.join(output_directory, "segmented_layout.png")
+    cv2.imwrite(segmented_path, segmented)
 
-    walls_mask = detect_walls(cropped)
-    clean_rooms = cv2.subtract(floor_mask, walls_mask)
-
-    contours, _ = cv2.findContours(clean_rooms, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+#
+# generates simplified 2d layout image with walls and floor masks and saves it
+#
+# input:
+# - img - 3-channel image
+# - floor_mask - mask that represents floor approximation
+# - walls_mask - mask that represents wall approximation
+#
+def save_simplified_2d_layout(img, floor_mask, walls_mask, output_directory):
+    rooms = cv2.subtract(floor_mask, walls_mask)
+    contours, _ = cv2.findContours(rooms, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
-    output_image = np.zeros(cropped.shape[:3], np.uint8)
+    output_image = np.zeros(img.shape[:3], np.uint8)
     sorted_contours = sorted(contours, key=cv2.contourArea, reverse=True)
+    MIN_CNT_AREA = 500
 
     for cnt in sorted_contours:
-        if cv2.contourArea(cnt) < 500:
+        if cv2.contourArea(cnt) < MIN_CNT_AREA:
             continue
         
         x, y, w, h = cv2.boundingRect(cnt)
@@ -124,30 +137,62 @@ def process_image(path):
 
     kernel_close = np.ones((15, 15), np.uint8)
     output_image = cv2.morphologyEx(output_image, cv2.MORPH_CLOSE, kernel_close)
-
-    segmented = np.zeros(cropped.shape[:3], np.uint8)
-    segmented[floor_mask == 255] = (0, 255, 0)
-    segmented[walls_mask == 255] = (0, 255, 255)
     
-    cv2.imshow("ROI", cropped)
-    cv2.imshow("Segmented Layout", segmented)
-    cv2.imshow("2d Simplified Layout", output_image)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-    return
 
+    simplified_2d_path = os.path.join(output_directory, "simplified_2d_layout.png")    
+    cv2.imwrite(simplified_2d_path, output_image)
+
+#
+# input:
+#  - path - path to the image to be processed
+#  - output_subdirectory - path to store directory with output artifacts
+#
+def process_image(path, output_subdirectory):
+    if not os.path.exists(path):
+        raise RuntimeError("Image not found: {}".format(path))
+    
+    if not os.path.exists(output_subdirectory):
+        os.makedirs(output_subdirectory)
+        print("Created subdirectory: {}".format(output_subdirectory))
+
+    # process image
+    img = cv2.imread(path)    
+    cropped, shifted_contour = get_floor_roi(img)
+    walls_mask = detect_walls(cropped)
+    
+    floor_mask = np.zeros(cropped.shape[:2], np.uint8)
+    cv2.drawContours(floor_mask, [shifted_contour], -1, 255, -1)
+    
+    save_segmented_image(cropped, floor_mask, walls_mask, output_subdirectory)
+    save_simplified_2d_layout(cropped, floor_mask, walls_mask, output_subdirectory)
+    
+    # save region of interest
+    roi_path = os.path.join(output_subdirectory, "roi.png")
+    cv2.imwrite(roi_path, cropped)
 
 
 def main():
-    if os.path.exists(INPUT_FOLDER) != True:
-        raise RuntimeError("Input directory not found: {}".format(INPUT_FOLDER))
+    if not os.path.exists(INPUT_DIR):
+        raise RuntimeError("Input directory not found: {}".format(INPUT_DIR))
     
-    for root, _, files in os.walk(INPUT_FOLDER):
+    if not os.path.exists(OUTPUT_DIR):
+        os.makedirs(OUTPUT_DIR)
+        print("Created output directory: {}".format(OUTPUT_DIR))
+    
+    
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    output_directory = os.path.join(OUTPUT_DIR, "output_{}".format(timestamp))
+    for root, _, files in os.walk(INPUT_DIR):
         for file in files:
             file_abspath = os.path.join(root, file)
-            print(f"File: {file_abspath}")
+            print("Processing file: {}".format(file_abspath))
+            
+            image_name, _ = os.path.splitext(os.path.basename(file_abspath))
+            image_name_clean = image_name.replace(" ", "").replace(".", "")
+            
+            output_subdirectory = os.path.join(output_directory, image_name_clean)
 
-            process_image(file_abspath)
+            process_image(file_abspath, output_subdirectory)
 
 if __name__ == '__main__':
     main()

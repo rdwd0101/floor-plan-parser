@@ -53,5 +53,14 @@ Inside of these subdirs, there will be directories corresponding to each input i
         - coordinates - x, y, width and height of room box on the ROI;
     - rooms_count - count of parsed rooms;
 
+
+## Limitations
+
+- Algorithm assumes that wall greyscale shade lies between boundaries (set by shade_tolerance parameter equal to 5 by default), which can be an issue for strong gradients and complex wall textures. Possible solution: use a DNN (U-net) for wall detection;
+- Wall thickness is set in relation for given input images and can cause issues on walls with different shapes;
+- Room 2d layout is approximated using bounding boxes, which over-simplifies the layout. Possible solution: instead of calculating bounding boxes, the segmented layout image can be modified using OpenCV to fit into 2d plane;
+- No object detection inside of rooms at this stage (can be done using YOLO to determine room type (kitchen, living room, etc)).
+
+
 ## License
 MIT license

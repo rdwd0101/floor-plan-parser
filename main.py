@@ -74,7 +74,7 @@ def get_floor_roi(img, gaussian_kernel=9):
     # floodfill image
     img_floodfill = img_threshold.copy()
     h, w = img_gray.shape[:2]
-    mask = np.zeros((h+2, w+2), np.uint8)
+    mask = np.zeros((h+2, w+2), np.uint8) # add 2 pixels to comply with mask assertion
     cv2.floodFill(img_floodfill, mask, (0,0), 0);
     
     # edge detection to find largest contour (floor contour)
